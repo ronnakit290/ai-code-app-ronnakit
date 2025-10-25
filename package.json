@@ -2,6 +2,9 @@
   "name": "ai-code-app-ronnakit",
   "displayName": "ai code app ronnakit",
   "description": "",
+  "repository": {
+    "url": "https://github.com/ronnakit290/ai-code-app-ronnakit.git"
+  },
   "version": "0.0.1",
   "type": "module",
   "engines": {
@@ -55,7 +58,8 @@
   "scripts": {
     "lint": "eslint .",
     "pretest": "yarn run lint",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "build": "vsce package"
   },
   "devDependencies": {
     "@types/vscode": "^1.105.0",
