@@ -1,0 +1,71 @@
+{
+  "name": "ai-code-app-ronnakit",
+  "displayName": "ai code app ronnakit",
+  "description": "",
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "extension.setAiConfig",
+        "title": "AI: Set Config"
+      },
+      {
+        "command": "extension.generatePaths",
+        "title": "AI: Generate Paths"
+      },
+      {
+        "command": "extension.createProjectByAI",
+        "title": "AI: Create Project By AI"
+      },
+      {
+        "command": "extension.storePrompt",
+        "title": "AI: Prompt Templates (CRUD + Run)"
+      }
+    ],
+    "configuration": {
+      "title": "AI Configuration",
+      "properties": {
+        "ai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key for AI service"
+        },
+        "ai.apiUrl": {
+          "type": "string", 
+          "default": "",
+          "description": "Base URL for AI API"
+        },
+        "ai.model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "AI Model to use"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "yarn run lint",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.105.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "eslint": "^9.34.0",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2"
+  },
+  "dependencies": {
+    "openai": "^6.6.0"
+  }
+}

@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-%NONCE%';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Template Inputs</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); }
+    .wrapper { display: flex; flex-direction: column; height: 100vh; }
+    .header { padding: 8px 16px; border-bottom: 1px solid var(--vscode-panel-border); }
+    .header h1 { margin: 4px 0 6px; font-size: 14px; }
+    .stats { font-size: 12px; opacity: 0.8; }
+    .body { display: grid; grid-template-columns: 1fr 1fr; gap: 0; flex: 1; }
+    .left, .right { padding: 12px 16px; overflow: auto; }
+    .section-title { font-weight: 700; font-size: 12px; margin: 0 0 8px; }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+    .field.choice { gap: 10px; }
+    .field.choice .options { display: flex; flex-direction: column; gap: 4px; }
+    .field.choice .checkbox { display: flex; align-items: center; gap: 8px; }
+    .field.radio .options { display: flex; flex-direction: column; gap: 4px; }
+    .field.radio .radio { display: flex; align-items: center; gap: 8px; }
+    .field.ai { display: flex; flex-direction: column; gap: 8px; }
+    .field.ai .ai-input-wrapper { display: flex; gap: 8px; }
+    .field.ai input[type="text"] { flex: 1; padding: 6px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
+    .field.ai button { padding: 6px 12px; border: 1px solid var(--vscode-button-border, var(--vscode-panel-border)); border-radius: 4px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); cursor: pointer; }
+    .field.ai button:hover { background: var(--vscode-button-hoverBackground); }
+    .field.ai button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .field.ai .ai-result { margin-top: 8px; padding: 8px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; background: var(--vscode-input-background); }
+    label { font-weight: 600; font-size: 12px; }
+    textarea { min-height: 80px; resize: vertical; font-family: var(--vscode-editor-font-family, monospace); font-size: var(--vscode-editor-font-size, 13px); color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 8px; }
+    pre { margin: 0; padding: 12px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; font-family: var(--vscode-editor-font-family, monospace); font-size: var(--vscode-editor-font-size, 12px); white-space: pre-wrap; word-break: break-word; background: var(--vscode-editor-inactiveSelectionBackground, rgba(128,128,128,0.08)); }
+    .tok { background: transparent; transition: background 0.15s ease; }
+    .tok.highlight { background: var(--vscode-editor-selectionBackground, rgba(100,150,240,0.3)); }
+    .footer { padding: 10px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--vscode-panel-border); }
+    button { padding: 6px 16px; border-radius: 4px; border: 1px solid transparent; font-size: 13px; cursor: pointer; }
+    button.save { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+    button.save:hover { background: var(--vscode-button-hoverBackground); }
+    button.cancel { background: transparent; color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground)); border-color: var(--vscode-button-border, var(--vscode-panel-border)); }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <header class="header">
+      <h1 id="title">กรอกค่าจาก template</h1>
+      <div class="stats" id="stats"></div>
+    </header>
+    <div class="body">
+      <main class="left">
+        <div class="section-title">ตัวเลือก (Choices)</div>
+        <form id="promptForm"></form>
+      </main>
+      <aside class="right">
+        <div class="section-title">พรีวิว Prompt / Highlight</div>
+        <pre id="preview"></pre>
+      </aside>
+    </div>
+    <footer class="footer">
+      <button class="cancel" id="cancelBtn" type="button">Cancel</button>
+      <button class="save" id="saveBtn" type="button">Save</button>
+    </footer>
+  </div>
+  <script nonce="%NONCE%">
+    const vscode = acquireVsCodeApi();
+    // Decode base64 as UTF-8 to preserve non-ASCII characters
+    function decodeBase64Utf8(b64) {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new TextDecoder('utf-8').decode(bytes);
+    }
+    const data = JSON.parse(decodeBase64Utf8('%INITIAL_DATA%'));
+
+    const titleEl = document.getElementById('title');
+    const statsEl = document.getElementById('stats');
+    const form = document.getElementById('promptForm');
+    const preview = document.getElementById('preview');
+    const saveBtn = document.getElementById('saveBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+
+    const placeholders = Array.isArray(data.placeholders) ? data.placeholders : [];
+    const choiceTokens = Array.isArray(data.choiceTokens) ? data.choiceTokens : [];
+    const templateContent = String(data.templateContent || '');
+    const fieldOrder = Array.isArray(data.fieldOrder) ? data.fieldOrder : [];
+
+    titleEl.textContent = data.title || 'กรอกค่าจาก template';
+    statsEl.textContent = `placeholders: ${placeholders.length} | choices: ${choiceTokens.length}`;
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function buildForm() {
+      // Build form fields in the order they appear in the template
+      if (fieldOrder.length > 0) {
+        // Use the provided field order
+        fieldOrder.forEach((fieldInfo) => {
+          if (fieldInfo.type === 'choice' && choiceTokens[fieldInfo.index]) {
+            buildChoiceField(fieldInfo.index, choiceTokens[fieldInfo.index]);
+          } else if (fieldInfo.type === 'radio' && choiceTokens[fieldInfo.index]) {
+            buildRadioField(fieldInfo.index, choiceTokens[fieldInfo.index]);
+          } else if (fieldInfo.type === 'ai' && choiceTokens[fieldInfo.index]) {
+            buildAIField(fieldInfo.index, choiceTokens[fieldInfo.index]);
+          } else if (fieldInfo.type === 'placeholder' && placeholders.includes(fieldInfo.name)) {
+            buildTextField(fieldInfo.name);
+          }
+        });
+      } else {
+        // Fallback: Process all tokens in order
+        choiceTokens.forEach((token, index) => {
+          if (token.type === 'choice') {
+            buildChoiceField(index, token);
+          } else if (token.type === 'radio') {
+            buildRadioField(index, token);
+          } else if (token.type === 'ai') {
+            buildAIField(index, token);
+          }
+        });
+
+        // Then simple placeholders
+        placeholders.forEach((name) => {
+          buildTextField(name);
+        });
+      }
+    }
+
+    function buildChoiceField(index, token) {
+      const field = document.createElement('div');
+      field.className = 'field choice';
+      field.dataset.choiceIndex = String(index);
+      field.dataset.default = token.default ? String(token.default) : '';
+
+      const label = document.createElement('div');
+      label.className = 'choice-label';
+      label.textContent = token.name ? `${token.name}` : `ชุดตัวเลือกที่ ${index + 1}`;
+      field.appendChild(label);
+
+      const options = document.createElement('div');
+      options.className = 'options';
+      const def = token.default || '';
+      (token.options || []).forEach((opt) => {
+        const wrapper = document.createElement('label');
+        wrapper.className = 'checkbox';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = opt;
+        if (def && def === opt) input.checked = true;
+        input.addEventListener('focus', () => highlightChoice(index, true));
+        input.addEventListener('blur', () => highlightChoice(index, false));
+        input.addEventListener('change', renderPreview);
+        wrapper.appendChild(input);
+        wrapper.appendChild(document.createTextNode(opt));
+        options.appendChild(wrapper);
+      });
+      field.appendChild(options);
+      form.appendChild(field);
+    }
+
+    function buildRadioField(index, token) {
+      const field = document.createElement('div');
+      field.className = 'field radio';
+      field.dataset.choiceIndex = String(index);
+      field.dataset.default = token.default ? String(token.default) : '';
+
+      const label = document.createElement('div');
+      label.className = 'radio-label';
+      label.textContent = token.name ? `${token.name}` : `ตัวเลือกเดียวที่ ${index + 1}`;
+      field.appendChild(label);
+
+      const options = document.createElement('div');
+      options.className = 'options';
+      const def = token.default || '';
+      (token.options || []).forEach((opt) => {
+        const wrapper = document.createElement('label');
+        wrapper.className = 'radio';
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = `radio-${index}`;
+        input.value = opt;
+        if (def && def === opt) input.checked = true;
+        input.addEventListener('focus', () => highlightChoice(index, true));
+        input.addEventListener('blur', () => highlightChoice(index, false));
+        input.addEventListener('change', renderPreview);
+        wrapper.appendChild(input);
+        wrapper.appendChild(document.createTextNode(opt));
+        options.appendChild(wrapper);
+      });
+      field.appendChild(options);
+      form.appendChild(field);
+    }
+
+    function buildAIField(index, token) {
+      const field = document.createElement('div');
+      field.className = 'field ai';
+      field.dataset.choiceIndex = String(index);
+      field.dataset.default = token.default ? String(token.default) : '';
+
+      const label = document.createElement('div');
+      label.className = 'ai-label';
+      label.textContent = token.name ? `${token.name}` : `AI Input ${index + 1}`;
+      field.appendChild(label);
+
+      const promptText = document.createElement('div');
+      promptText.className = 'ai-prompt';
+      promptText.textContent = `Prompt: ${token.aiPrompt || token.options[0]}`;
+      promptText.style.fontSize = '12px';
+      promptText.style.opacity = '0.8';
+      promptText.style.marginBottom = '8px';
+      field.appendChild(promptText);
+
+      const inputWrapper = document.createElement('div');
+      inputWrapper.className = 'ai-input-wrapper';
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'กรอกข้อมูลหรือกด Submit เพื่อเรียก AI';
+      input.dataset.aiIndex = String(index);
+      input.addEventListener('focus', () => highlightChoice(index, true));
+      input.addEventListener('blur', () => highlightChoice(index, false));
+      input.addEventListener('input', renderPreview);
+
+      const button = document.createElement('button');
+      button.textContent = 'Submit to AI';
+      button.addEventListener('click', () => callAI(index, token, input));
+
+      inputWrapper.appendChild(input);
+      inputWrapper.appendChild(button);
+      field.appendChild(inputWrapper);
+
+      const resultDiv = document.createElement('div');
+      resultDiv.className = 'ai-result';
+      resultDiv.style.display = 'none';
+      resultDiv.dataset.aiResultIndex = String(index);
+      field.appendChild(resultDiv);
+
+      form.appendChild(field);
+    }
+
+    function buildTextField(name) {
+      const field = document.createElement('div');
+      field.className = 'field text';
+      const label = document.createElement('label');
+      label.setAttribute('for', `field-${name}`);
+      label.textContent = name;
+      const ta = document.createElement('textarea');
+      ta.id = `field-${name}`;
+      ta.dataset.placeholderName = name;
+      ta.placeholder = name;
+      ta.addEventListener('focus', () => highlightPlaceholder(name, true));
+      ta.addEventListener('blur', () => highlightPlaceholder(name, false));
+      ta.addEventListener('input', renderPreview);
+      field.appendChild(label);
+      field.appendChild(ta);
+      form.appendChild(field);
+    }
+
+    function wrapTokensInPreview(src, simpleValues, choiceSelections) {
+      // escape once
+      let escaped = escapeHtml(src);
+
+      // Wrap choice tokens sequentially using their raw string
+      choiceTokens.forEach((t, idx) => {
+        const raw = escapeHtml(t.raw || '');
+        if (!raw) return;
+        const marker = `__CHOICE_MARK_${idx}__`;
+        // Replace first occurrence only
+        const pos = escaped.indexOf(raw);
+        if (pos !== -1) {
+          escaped = escaped.slice(0, pos) + marker + escaped.slice(pos + raw.length);
+          const selected = choiceSelections[String(idx)] || [];
+          
+          let display;
+          if (t.type === 'ai') {
+            // For AI fields, show the result or input value
+            const aiResult = document.querySelector(`[data-ai-result-index="${idx}"]`);
+            const aiInput = document.querySelector(`input[data-ai-index="${idx}"]`);
+            
+            if (aiResult && aiResult.style.display !== 'none' && aiResult.textContent) {
+              display = aiResult.textContent;
+            } else if (aiInput && aiInput.value) {
+              display = aiInput.value;
+            } else {
+              display = t.default || (t.raw || '');
+            }
+          } else {
+            // For choice and radio fields
+            display = (Array.isArray(selected) && selected.length > 0)
+              ? selected.join(', ')
+              : (t.default || (t.raw || ''));
+          }
+          
+          const displayEsc = escapeHtml(display);
+          const spanClass = t.type === 'ai' ? 'tok ai' : t.type === 'radio' ? 'tok radio' : 'tok choice';
+          const span = `<span class="${spanClass}" data-choice-index="${idx}">${displayEsc}</span>`;
+          escaped = escaped.replace(marker, span);
+        }
+      });
+
+      // Wrap simple placeholders like {{ name }} for known names (global)
+      placeholders.forEach((name) => {
+        const safe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const rx = new RegExp('\\{\\{\\s*' + safe + '\\s*\\}\\}', 'g');
+        escaped = escaped.replace(rx, (m) => {
+          const v = simpleValues[name];
+          const inside = v ? escapeHtml(v) : m; // if empty, keep token text as-is
+          return `<span class="tok ph" data-ph-name="${name}">${inside}</span>`;
+        });
+      });
+
+      return escaped;
+    }
+
+    function renderPreview() {
+      const { simpleValues, choiceSelections } = collectValues();
+      preview.innerHTML = wrapTokensInPreview(templateContent, simpleValues, choiceSelections);
+    }
+
+    function setHighlight(selector, on) {
+      preview.querySelectorAll(selector).forEach((el) => {
+        if (on) el.classList.add('highlight'); else el.classList.remove('highlight');
+      });
+    }
+
+    function highlightPlaceholder(name, on) {
+      setHighlight(`.tok.ph[data-ph-name="${CSS.escape(name)}"]`, on);
+    }
+
+    function highlightChoice(index, on) {
+      const token = choiceTokens[index];
+      let selector;
+      if (token.type === 'ai') {
+        selector = `.tok.ai[data-choice-index="${index}"]`;
+      } else if (token.type === 'radio') {
+        selector = `.tok.radio[data-choice-index="${index}"]`;
+      } else {
+        selector = `.tok.choice[data-choice-index="${index}"]`;
+      }
+      setHighlight(selector, on);
+    }
+
+    function collectValues() {
+      const simpleValues = {};
+      form.querySelectorAll('[data-placeholder-name]').forEach((el) => {
+        simpleValues[el.dataset.placeholderName] = el.value;
+      });
+
+      const choiceSelections = {};
+      
+      // Handle choice fields (checkboxes)
+      form.querySelectorAll('.field.choice').forEach((node) => {
+        const index = node.dataset.choiceIndex;
+        const selected = Array.from(node.querySelectorAll('input[type="checkbox"]:checked')).map((i) => i.value);
+        if (selected.length > 0) choiceSelections[index] = selected;
+        else if (node.dataset.default) choiceSelections[index] = [node.dataset.default];
+        else choiceSelections[index] = [];
+      });
+
+      // Handle radio fields (single selection)
+      form.querySelectorAll('.field.radio').forEach((node) => {
+        const index = node.dataset.choiceIndex;
+        const selected = Array.from(node.querySelectorAll('input[type="radio"]:checked')).map((i) => i.value);
+        if (selected.length > 0) choiceSelections[index] = selected;
+        else if (node.dataset.default) choiceSelections[index] = [node.dataset.default];
+        else choiceSelections[index] = [];
+      });
+
+      // Handle AI fields (text input or AI result)
+      form.querySelectorAll('.field.ai').forEach((node) => {
+        const index = node.dataset.choiceIndex;
+        const input = node.querySelector('input[type="text"]');
+        const resultDiv = node.querySelector('[data-ai-result-index]');
+        
+        // Use AI result if available, otherwise use manual input
+        if (resultDiv && resultDiv.style.display !== 'none') {
+          choiceSelections[index] = [resultDiv.textContent];
+        } else if (input && input.value) {
+          choiceSelections[index] = [input.value];
+        } else if (node.dataset.default) {
+          choiceSelections[index] = [node.dataset.default];
+        } else {
+          choiceSelections[index] = [];
+        }
+      });
+
+      return { simpleValues, choiceSelections };
+    }
+
+    function postSave() {
+      const { simpleValues, choiceSelections } = collectValues();
+      vscode.postMessage({ type: 'save', simpleValues, choiceSelections });
+    }
+
+    async function callAI(index, token, inputElement) {
+      const button = inputElement.nextElementSibling;
+      const resultDiv = form.querySelector(`[data-ai-result-index="${index}"]`);
+      
+      button.disabled = true;
+      button.textContent = 'Processing...';
+      
+      try {
+        const prompt = token.aiPrompt || token.options[0];
+        const userInput = inputElement.value.trim();
+        
+        // Combine AI prompt with user input if provided
+        const fullPrompt = userInput ? `${prompt}\n\n${userInput}` : prompt;
+        
+        // Send message to VS Code extension to call AI
+        vscode.postMessage({
+          type: 'callAI',
+          index,
+          prompt: fullPrompt,
+          default: token.default
+        });
+        
+        // Show loading state
+        resultDiv.style.display = 'block';
+        resultDiv.textContent = 'กำลังประมวลผลด้วย AI...';
+        resultDiv.style.color = 'var(--vscode-descriptionForeground)';
+        
+      } catch (error) {
+        resultDiv.style.display = 'block';
+        resultDiv.textContent = `ข้อผิดพลาด: ${error.message}`;
+        resultDiv.style.color = 'var(--vscode-errorForeground)';
+        button.disabled = false;
+        button.textContent = 'Submit to AI';
+      }
+    }
+
+    // Listen for AI response from VS Code
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message.type === 'aiResponse') {
+        const resultDiv = form.querySelector(`[data-ai-result-index="${message.index}"]`);
+        const button = form.querySelector(`.field.ai[data-choice-index="${message.index}"] button`);
+        
+        if (resultDiv && button) {
+          resultDiv.textContent = message.response || message.default || 'ไม่ได้รับคำตอบจาก AI';
+          resultDiv.style.color = 'var(--vscode-input-foreground)';
+          button.disabled = false;
+          button.textContent = 'Submit to AI';
+          
+          // Update preview with AI result
+          renderPreview();
+        }
+      } else if (message.type === 'aiError') {
+        const resultDiv = form.querySelector(`[data-ai-result-index="${message.index}"]`);
+        const button = form.querySelector(`.field.ai[data-choice-index="${message.index}"] button`);
+        
+        if (resultDiv && button) {
+          resultDiv.textContent = `ข้อผิดพลาด: ${message.error}`;
+          resultDiv.style.color = 'var(--vscode-errorForeground)';
+          button.disabled = false;
+          button.textContent = 'Submit to AI';
+        }
+      }
+    });
+
+  buildForm();
+  renderPreview();
+
+    saveBtn.addEventListener('click', postSave);
+    cancelBtn.addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
+    window.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault();
+        postSave();
+      }
+    });
+
+    const firstTextField = form.querySelector('[data-placeholder-name]');
+    const firstChoiceField = form.querySelector('.field.choice input');
+    const initialFocus = firstTextField || firstChoiceField;
+    if (initialFocus) initialFocus.focus();
+  </script>
+</body>
+</html>
